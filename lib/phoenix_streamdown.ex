@@ -62,6 +62,8 @@ defmodule PhoenixStreamdown do
       # mix.exs
       {:lumis_wasm_elixir, "~> 0.26"}
 
+  `mix phoenix_streamdown.install` writes both for you.
+
   Without it, code blocks render unhighlighted instead of failing, and `theme` is
   ignored. Pass `theme={nil}` to turn highlighting off explicitly.
 

@@ -12,6 +12,8 @@ def deps do
 end
 ```
 
+Syntax highlighting is opt-in for MDEx 0.13 and newer. Run `mix phoenix_streamdown.install` to add the Lumis config and a parser package, or skip it and code blocks render unhighlighted.
+
 ## Usage
 
 ```elixir

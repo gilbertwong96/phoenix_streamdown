@@ -19,7 +19,7 @@ defmodule PhoenixStreamdown.MixProject do
       source_url: @source_url,
       homepage_url: @source_url,
       dialyzer: [
-        plt_add_apps: [:ex_unit],
+        plt_add_apps: [:ex_unit, :mix],
         plt_file: {:no_warn, "priv/plts/project.plt"}
       ]
     ]

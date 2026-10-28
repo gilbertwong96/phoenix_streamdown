@@ -12,6 +12,7 @@
 
 - Update `phoenix_live_view` to 1.2 and the dev/test tooling to the latest versions
 - Render a block only when its source or the rendering options changed, so a streamed token re-renders the last block instead of every block. Completed messages in a list keep their rendered HTML until their content changes.
+- Add `mix phoenix_streamdown.install`, which writes the `mdex_native` Lumis config and adds a parser package
 
 ### Fixes
 
