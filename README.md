@@ -47,7 +47,7 @@ Include the CSS (`fadeIn`, `blurIn`, `slideUp`):
 3. **MDEx** — renders each block to HTML server-side (Rust-backed)
 4. **LiveView** — diffs only the active block, skips the rest
 
-On a 56-block document, this is **~7x less server work** and **~460x smaller diffs** per token compared to re-rendering the full document each time.
+On a 56-block document, this is **~7x less server work** and **~460x smaller diffs** per token compared to re-rendering the full document each time. Run `mix run bench/render_bench.exs` to measure it on your machine.
 
 ## Example
 
