@@ -53,6 +53,18 @@ defmodule PhoenixStreamdown do
   `catppuccin_mocha`, `nord`, `tokyonight_night`, `vscode_dark`, and
   [100+ more](https://lumis.sh).
 
+  Highlighting is an optional MDEx feature. It needs `mdex_native` compiled with Lumis
+  and a parser package for the languages you highlight:
+
+      # config/config.exs
+      config :mdex_native, syntax_highlighter: :lumis
+
+      # mix.exs
+      {:lumis_wasm_elixir, "~> 0.26"}
+
+  Without it, code blocks render unhighlighted instead of failing, and `theme` is
+  ignored. Pass `theme={nil}` to turn highlighting off explicitly.
+
   ### CSS classes
 
       <.markdown content={@md} class="prose" block_class="mb-4" />
@@ -129,6 +141,9 @@ defmodule PhoenixStreamdown do
     ]
   ]
 
+  @failed_syntax_highlight {__MODULE__, :failed_syntax_highlight}
+  @logged_errors {__MODULE__, :logged_errors}
+
   @doc """
   Renders markdown content with streaming support.
 
@@ -140,7 +155,7 @@ defmodule PhoenixStreamdown do
     * `class` — CSS class for the wrapper `<div>`
     * `block_class` — CSS class for each block `<div>`
     * `id` — id prefix; required when `streaming: true`, generated otherwise
-    * `theme` — syntax highlighting theme name (default: `"onedark"`)
+    * `theme` — syntax highlighting theme name (default: `"onedark"`); `nil` disables highlighting
     * `mdex_opts` — options passed to `MDEx.to_html!/2` (merged with defaults)
 
   ## Examples
@@ -283,15 +298,21 @@ defmodule PhoenixStreamdown do
   end
 
   defp build_mdex_opts(user_opts, theme) do
-    theme_opts = [
-      syntax_highlight: [
-        formatter: {:html_inline, [theme: theme]}
-      ]
-    ]
-
     @default_mdex_opts
-    |> deep_merge(theme_opts)
+    |> deep_merge(theme_opts(theme))
     |> deep_merge(user_opts)
+  end
+
+  defp theme_opts(nil), do: []
+
+  defp theme_opts(theme) do
+    syntax_highlight = [engine: :lumis, opts: [formatter: {:html_inline, theme: theme}]]
+
+    if syntax_highlight_failed?(syntax_highlight) do
+      []
+    else
+      [syntax_highlight: syntax_highlight]
+    end
   end
 
   defp deep_merge(base, override) do
@@ -307,25 +328,75 @@ defmodule PhoenixStreamdown do
   defp render_block(block, mdex_opts) do
     MDEx.to_html!(block, mdex_opts)
   rescue
-    exception ->
-      log_render_error(exception, block)
-      "<p>#{block |> Phoenix.HTML.html_escape() |> safe_to_string()}</p>"
+    exception -> handle_render_error(block, mdex_opts, exception)
   end
 
-  defp log_render_error(exception, block) do
-    signature = {exception.__struct__, Exception.message(exception)}
-    key = {__MODULE__, :logged_render_errors}
-    logged = Process.get(key, MapSet.new())
+  # The highlighter is optional (MDEx needs Lumis for it). Losing it must not cost
+  # content, so retry the block without highlighting.
+  defp handle_render_error(block, mdex_opts, exception) do
+    case Keyword.get(mdex_opts, :syntax_highlight) do
+      nil ->
+        render_plain_text(block, exception)
+
+      syntax_highlight ->
+        retry_without_syntax_highlight(block, mdex_opts, syntax_highlight, exception)
+    end
+  end
+
+  defp retry_without_syntax_highlight(block, mdex_opts, syntax_highlight, exception) do
+    html = MDEx.to_html!(block, Keyword.delete(mdex_opts, :syntax_highlight))
+
+    # It renders without the highlighter, so that was the problem. Stop asking
+    # for it in this process instead of paying a failed render per block.
+    disable_syntax_highlight(syntax_highlight, exception)
+    html
+  rescue
+    retry_exception -> render_plain_text(block, retry_exception)
+  end
+
+  defp render_plain_text(block, exception) do
+    log_once(
+      :error,
+      {:render, exception.__struct__, Exception.message(exception)},
+      "PhoenixStreamdown could not render a markdown block with MDEx and fell back " <>
+        "to escaped plain text (#{describe(exception)}). Block starts with: " <>
+        inspect(String.slice(block, 0, 200))
+    )
+
+    "<p>#{block |> Phoenix.HTML.html_escape() |> safe_to_string()}</p>"
+  end
+
+  defp disable_syntax_highlight(syntax_highlight, exception) do
+    failed = Process.get(@failed_syntax_highlight, MapSet.new())
+
+    unless MapSet.member?(failed, syntax_highlight) do
+      Process.put(@failed_syntax_highlight, MapSet.put(failed, syntax_highlight))
+
+      log_once(
+        :warning,
+        {:syntax_highlight, syntax_highlight},
+        "PhoenixStreamdown could not syntax highlight a code block and now renders " <>
+          "code blocks without highlighting (#{describe(exception)}). See the docs for " <>
+          "enabling Lumis."
+      )
+    end
+  end
+
+  defp syntax_highlight_failed?(syntax_highlight) do
+    failed = Process.get(@failed_syntax_highlight, MapSet.new())
+    MapSet.member?(failed, syntax_highlight)
+  end
+
+  defp describe(exception) do
+    "#{inspect(exception.__struct__)}: #{Exception.message(exception)}"
+  end
+
+  defp log_once(level, signature, message) do
+    logged = Process.get(@logged_errors, MapSet.new())
 
     unless MapSet.member?(logged, signature) do
-      Process.put(key, MapSet.put(logged, signature))
-
-      Logger.error(
-        "PhoenixStreamdown could not render a markdown block with MDEx and fell back " <>
-          "to escaped plain text (#{inspect(exception.__struct__)}: " <>
-          "#{Exception.message(exception)}). Block starts with: " <>
-          inspect(String.slice(block, 0, 200))
-      )
+      Process.put(@logged_errors, MapSet.put(logged, signature))
+      Logger.log(level, message)
     end
   end
 end

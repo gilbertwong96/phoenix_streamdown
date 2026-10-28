@@ -188,6 +188,41 @@ defmodule PhoenixStreamdownTest do
       assert default_html != themed_html
     end
 
+    test "renders code blocks without highlighting when theme is nil" do
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "```elixir\nIO.puts(:hello)\n```",
+          theme: nil
+        })
+
+      refute html =~ "<span style="
+      assert html =~ ~s(<code class="language-elixir")
+      assert html =~ "IO.puts"
+    end
+
+    test "renders code blocks unhighlighted and warns once when the highlighter is unavailable" do
+      render_without_highlighter = fn ->
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "```elixir\nIO.puts(:hello)\n```",
+          mdex_opts: [syntax_highlight: [engine: :bogus]]
+        })
+      end
+
+      logs =
+        capture_log(fn ->
+          for _ <- 1..2 do
+            html = render_without_highlighter.()
+
+            refute html =~ "<span style="
+            assert html =~ ~s(<code class="language-elixir")
+            assert html =~ "IO.puts"
+          end
+        end)
+
+      assert logs =~ "without highlighting"
+      assert length(String.split(logs, "without highlighting")) == 2
+    end
+
     test "deep-merges mdex_opts with defaults" do
       html =
         render_component(&PhoenixStreamdown.markdown/1, %{
