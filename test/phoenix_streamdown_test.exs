@@ -2,6 +2,7 @@ defmodule PhoenixStreamdownTest do
   use ExUnit.Case, async: true
   use PhoenixStreamdown
 
+  import ExUnit.CaptureLog
   import Phoenix.LiveViewTest
 
   describe "use PhoenixStreamdown" do
@@ -281,6 +282,41 @@ defmodule PhoenixStreamdownTest do
 
       assert block_0_div =~ ~s(phx-update="ignore"),
              "Block 0 should be frozen after its transition render"
+    end
+  end
+
+  describe "render failures" do
+    test "logs the error and falls back to escaped text when MDEx raises" do
+      log =
+        capture_log(fn ->
+          html =
+            render_component(&PhoenixStreamdown.markdown/1, %{
+              content: "**bold** <script>alert(1)</script>",
+              mdex_opts: [extension: [table: :invalid]]
+            })
+
+          refute html =~ "<strong>"
+          assert html =~ "**bold**"
+          assert html =~ "&lt;script&gt;"
+        end)
+
+      assert log =~ "PhoenixStreamdown"
+      assert log =~ "NimbleOptions.ValidationError"
+    end
+
+    test "logs a repeated failure only once per process" do
+      render_with_bad_opts = fn ->
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "first",
+          mdex_opts: [extension: [table: :invalid]]
+        })
+      end
+
+      first_log = capture_log(render_with_bad_opts)
+      second_log = capture_log(render_with_bad_opts)
+
+      assert first_log =~ "NimbleOptions.ValidationError"
+      assert second_log == ""
     end
   end
 

@@ -114,6 +114,8 @@ defmodule PhoenixStreamdown do
 
   import Phoenix.HTML, only: [raw: 1, safe_to_string: 1]
 
+  require Logger
+
   alias PhoenixStreamdown.Animate
   alias PhoenixStreamdown.Blocks
   alias PhoenixStreamdown.Remend
@@ -305,6 +307,25 @@ defmodule PhoenixStreamdown do
   defp render_block(block, mdex_opts) do
     MDEx.to_html!(block, mdex_opts)
   rescue
-    _ -> "<p>#{block |> Phoenix.HTML.html_escape() |> safe_to_string()}</p>"
+    exception ->
+      log_render_error(exception, block)
+      "<p>#{block |> Phoenix.HTML.html_escape() |> safe_to_string()}</p>"
+  end
+
+  defp log_render_error(exception, block) do
+    signature = {exception.__struct__, Exception.message(exception)}
+    key = {__MODULE__, :logged_render_errors}
+    logged = Process.get(key, MapSet.new())
+
+    unless MapSet.member?(logged, signature) do
+      Process.put(key, MapSet.put(logged, signature))
+
+      Logger.error(
+        "PhoenixStreamdown could not render a markdown block with MDEx and fell back " <>
+          "to escaped plain text (#{inspect(exception.__struct__)}: " <>
+          "#{Exception.message(exception)}). Block starts with: " <>
+          inspect(String.slice(block, 0, 200))
+      )
+    end
   end
 end
