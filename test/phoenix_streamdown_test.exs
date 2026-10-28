@@ -217,7 +217,7 @@ defmodule PhoenixStreamdownTest do
           block_class: "mb-4"
         })
 
-      assert length(Regex.scan(~r/class="mb-4"/, html)) == 2
+      assert Enum.count(Regex.scan(~r/class="mb-4"/, html)) == 2
     end
 
     test "applies syntax highlighting theme" do
@@ -269,7 +269,7 @@ defmodule PhoenixStreamdownTest do
         end)
 
       assert logs =~ "without highlighting"
-      assert length(String.split(logs, "without highlighting")) == 2
+      assert Enum.count(String.split(logs, "without highlighting")) == 2
     end
 
     test "deep-merges mdex_opts with defaults" do

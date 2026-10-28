@@ -45,7 +45,7 @@ defmodule PhoenixStreamdown.BlocksTest do
     test "handles unclosed code fence as single block" do
       input = "Before\n\n```\ncode\n\nmore code"
       blocks = Blocks.parse(input)
-      assert length(blocks) == 2
+      assert Enum.count(blocks) == 2
       assert hd(blocks) == "Before"
     end
   end
