@@ -40,7 +40,7 @@ Include the CSS (`fadeIn`, `blurIn`, `slideUp`):
 
 ## How it works
 
-1. **Remend** — auto-closes incomplete syntax (`**bold` → `**bold**`, unclosed fences, partial links)
+1. **MDEx `auto_close`** — closes incomplete syntax while it streams (`**bold`, unclosed fences, partial links, tables)
 2. **Blocks** — splits into independent blocks so earlier ones are stable
 3. **MDEx** — renders each block to HTML server-side (Rust-backed)
 4. **LiveView** — diffs only the active block, skips the rest

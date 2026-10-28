@@ -21,8 +21,8 @@ defmodule PhoenixStreamdown do
 
   ## How it works
 
-  1. `PhoenixStreamdown.Remend` — auto-closes incomplete markdown syntax
-     (`**bold` → `**bold**`, unclosed code fences, partial links)
+  1. [MDEx](https://hex.pm/packages/mdex) `auto_close` — closes syntax left open at the
+     end of the source (`**bold`, unclosed code fences, partial links, tables)
   2. `PhoenixStreamdown.Blocks` — splits markdown into independent blocks
   3. [MDEx](https://hex.pm/packages/mdex) — renders each block to HTML server-side (Rust-backed)
   4. LiveView — diffs only the active block, skips the rest
@@ -82,9 +82,9 @@ defmodule PhoenixStreamdown do
   ## What "frozen" costs
 
   A completed block is rendered once and then frozen with `phx-update="ignore"`, so the
-  client keeps the DOM it already has. If `Remend` guessed wrong about incomplete syntax,
-  that rendering sticks until the block gets a new id. Fine for append-only LLM output,
-  worth knowing when content can be corrected after the fact.
+  client keeps the DOM it already has. If `auto_close` guessed wrong about incomplete
+  syntax, that rendering sticks until the block gets a new id. Fine for append-only LLM
+  output, worth knowing when content can be corrected after the fact.
 
   ### MDEx options
 
@@ -92,13 +92,18 @@ defmodule PhoenixStreamdown do
 
       <.markdown content={@md} mdex_opts={[extension: [shortcodes: true]]} />
 
+  While `streaming` is true, incomplete links and images keep their label instead of
+  pointing at a placeholder URL (`auto_close: [links: :text, images: :text]`). Pass
+  `mdex_opts={[auto_close: false]}` to show the raw source until a construct is finished.
+
   ## Why not just MDEx streaming?
 
   MDEx has its own `streaming: true` mode. PhoenixStreamdown adds:
 
   - **Block-level memoization** — only the last block re-renders per token
   - **Ready-made LiveView component** — drop in, pass content and streaming flag
-  - **Remend** — strips partial links/images instead of rendering broken HTML
+  - **Readable partial syntax** — half-arrived links, images and tables stay readable
+    instead of rendering as broken markup
   - **Word-level animations** — fade-in/blur-in each new word as it streams
   """
 
@@ -130,7 +135,6 @@ defmodule PhoenixStreamdown do
 
   alias PhoenixStreamdown.Animate
   alias PhoenixStreamdown.Blocks
-  alias PhoenixStreamdown.Remend
 
   @default_mdex_opts [
     extension: [
@@ -183,19 +187,14 @@ defmodule PhoenixStreamdown do
   def markdown(assigns) do
     assigns = assign_stable_id(assigns)
 
-    completed =
-      if assigns.streaming do
-        Remend.complete(assigns.content || "")
-      else
-        assigns.content || ""
-      end
+    content = assigns.content || ""
 
     blocks =
-      completed
+      content
       |> Blocks.parse()
       |> Enum.with_index()
 
-    mdex_opts = build_mdex_opts(assigns.mdex_opts, assigns.theme)
+    mdex_opts = build_mdex_opts(assigns.mdex_opts, assigns.theme, assigns.streaming)
     last_idx = length(blocks) - 1
     animate? = assigns.streaming and is_binary(assigns.animate) and assigns.animate != ""
 
@@ -208,9 +207,11 @@ defmodule PhoenixStreamdown do
         Process.delete({__MODULE__, assigns.id})
 
         Enum.map(blocks, fn {block, idx} ->
-          {idx, render_block(block, mdex_opts), idx == last_idx}
+          {idx, block_html(block, idx, assigns.id, mdex_opts), idx == last_idx}
         end)
       end
+
+    trim_block_cache(assigns.id, last_idx)
 
     assigns =
       assigns
@@ -285,23 +286,61 @@ defmodule PhoenixStreamdown do
     prev_chars = if prev_block_idx == last_idx, do: prev_chars, else: 0
 
     Enum.map(blocks, fn {block, idx} ->
-      html = render_block(block, mdex_opts)
-
       if idx == last_idx do
+        html = render_block(block, mdex_opts)
         {animated, new_chars} = Animate.animate_words(html, prev_chars, animation: animation)
         Process.put(pdict_key, {last_idx, new_chars})
         {idx, animated, true}
       else
-        {idx, html, false}
+        {idx, block_html(block, idx, id, mdex_opts), false}
       end
     end)
   end
 
-  defp build_mdex_opts(user_opts, theme) do
+  # Blocks are only rendered again when their source or the rendering options
+  # changed: during a stream that is the last block, and a completed message in a
+  # list keeps the HTML it was rendered with until its content changes.
+  defp block_html(block, idx, id, mdex_opts) do
+    key = {__MODULE__, :block_html, id}
+    {opts, cached} = Process.get(key, {nil, %{}})
+    cached = if opts == mdex_opts, do: cached, else: %{}
+
+    case cached do
+      %{^idx => {^block, html}} ->
+        html
+
+      _ ->
+        html = render_block(block, mdex_opts)
+        Process.put(key, {mdex_opts, Map.put(cached, idx, {block, html})})
+        html
+    end
+  end
+
+  defp trim_block_cache(id, last_idx) do
+    key = {__MODULE__, :block_html, id}
+
+    case Process.get(key) do
+      {mdex_opts, cached} when map_size(cached) > last_idx + 1 ->
+        Process.put(key, {mdex_opts, Map.filter(cached, fn {idx, _} -> idx <= last_idx end)})
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp build_mdex_opts(user_opts, theme, streaming) do
     @default_mdex_opts
     |> deep_merge(theme_opts(theme))
+    |> deep_merge(auto_close_opts(streaming))
     |> deep_merge(user_opts)
   end
+
+  # MDEx closes syntax left open at the end of the source, so half-arrived
+  # `**bold`, fences, tables and links render as they will once complete.
+  # `:text` keeps the label of a half-arrived link or image instead of
+  # pointing it at a placeholder URL.
+  defp auto_close_opts(true), do: [auto_close: [links: :text, images: :text]]
+  defp auto_close_opts(false), do: []
 
   defp theme_opts(nil), do: []
 

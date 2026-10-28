@@ -104,6 +104,55 @@ defmodule PhoenixStreamdownTest do
       assert html =~ "language-elixir"
     end
 
+    test "keeps the label of an incomplete link during streaming" do
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "Read [the docs](https://exa",
+          streaming: true,
+          id: "partial-link"
+        })
+
+      assert html =~ "the docs"
+      refute html =~ "<a "
+      refute html =~ "https://exa"
+    end
+
+    test "keeps the alt text of an incomplete image during streaming" do
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "Here ![Chart](https://cdn.exa",
+          streaming: true,
+          id: "partial-image"
+        })
+
+      assert html =~ "Chart"
+      refute html =~ "<img"
+      refute html =~ "https://cdn.exa"
+    end
+
+    test "completes a table row that is still arriving" do
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "| a | b |\n|---|---|\n| 1",
+          streaming: true,
+          id: "partial-table"
+        })
+
+      assert html =~ "<table>"
+      assert html =~ "<td>1</td>"
+      assert html =~ "<td></td>"
+    end
+
+    test "does not complete anything when not streaming" do
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "Some **bol"
+        })
+
+      refute html =~ "<strong>"
+      assert html =~ "**bol"
+    end
+
     test "auto-generates an id when not streaming" do
       html1 =
         render_component(&PhoenixStreamdown.markdown/1, %{
@@ -353,6 +402,110 @@ defmodule PhoenixStreamdownTest do
       assert first_log =~ "NimbleOptions.ValidationError"
       assert second_log == ""
     end
+  end
+
+  describe "block memoization" do
+    test "reuses the rendered html of a block whose source did not change" do
+      id = "cache-reuse"
+
+      render_component(&PhoenixStreamdown.markdown/1, %{
+        content: "# Title\n\nfirst paragraph",
+        streaming: true,
+        id: id
+      })
+
+      poison_cached_html(id, 0, "REUSED")
+
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "# Title\n\nfirst paragraph continues",
+          streaming: true,
+          id: id
+        })
+
+      assert html =~ "REUSED"
+      assert html =~ "first paragraph continues"
+    end
+
+    test "renders a block again when its source changed" do
+      id = "cache-invalidate"
+
+      render_component(&PhoenixStreamdown.markdown/1, %{
+        content: "# Title\n\nfirst paragraph",
+        streaming: true,
+        id: id
+      })
+
+      poison_cached_html(id, 0, "STALE")
+
+      html =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "# Renamed\n\nfirst paragraph",
+          streaming: true,
+          id: id
+        })
+
+      refute html =~ "STALE"
+      assert html =~ "Renamed"
+    end
+
+    test "re-renders every block when the rendering options change" do
+      id = "cache-opts"
+
+      themed =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "# Title\n\n```elixir\nIO.puts(:a)\n```",
+          theme: "onedark",
+          id: id
+        })
+
+      poison_cached_html(id, 0, "STALE")
+
+      dracula =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "# Title\n\n```elixir\nIO.puts(:a)\n```",
+          theme: "dracula",
+          id: id
+        })
+
+      refute dracula =~ "STALE"
+      assert themed != dracula
+    end
+
+    test "drops cached blocks when the document shrinks" do
+      id = "cache-trim"
+
+      render_component(&PhoenixStreamdown.markdown/1, %{
+        content: "first\n\nsecond\n\nthird",
+        streaming: true,
+        id: id
+      })
+
+      assert map_size(block_cache(id)) == 3
+
+      render_component(&PhoenixStreamdown.markdown/1, %{
+        content: "first",
+        streaming: true,
+        id: id
+      })
+
+      assert map_size(block_cache(id)) == 1
+    end
+  end
+
+  defp block_cache(id) do
+    {_mdex_opts, cached} = Process.get({PhoenixStreamdown, :block_html, id})
+    cached
+  end
+
+  defp poison_cached_html(id, idx, html) do
+    key = {PhoenixStreamdown, :block_html, id}
+    {mdex_opts, cached} = Process.get(key)
+
+    Process.put(
+      key,
+      {mdex_opts, Map.update!(cached, idx, fn {block, _html} -> {block, html} end)}
+    )
   end
 
   defp transition_tracking_keys do
