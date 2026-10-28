@@ -29,7 +29,8 @@ defmodule PhoenixStreamdownTest do
       html =
         render_component(&PhoenixStreamdown.markdown/1, %{
           content: "**incomplete bold",
-          streaming: true
+          streaming: true,
+          id: "streaming"
         })
 
       assert html =~ "<strong>"
@@ -83,7 +84,8 @@ defmodule PhoenixStreamdownTest do
       html =
         render_component(&PhoenixStreamdown.markdown/1, %{
           content: "# Title\n\nStill typing",
-          streaming: true
+          streaming: true,
+          id: "ignore-check"
         })
 
       assert html =~ ~s(phx-update="ignore")
@@ -93,14 +95,15 @@ defmodule PhoenixStreamdownTest do
       html =
         render_component(&PhoenixStreamdown.markdown/1, %{
           content: "```elixir\nIO.puts(:hello",
-          streaming: true
+          streaming: true,
+          id: "code-stream"
         })
 
       assert html =~ "<code"
       assert html =~ "language-elixir"
     end
 
-    test "auto-generates unique id" do
+    test "auto-generates an id when not streaming" do
       html1 =
         render_component(&PhoenixStreamdown.markdown/1, %{
           content: "Hello"
@@ -114,6 +117,35 @@ defmodule PhoenixStreamdownTest do
       [_, id1] = Regex.run(~r/id="(psd-\d+)"/, html1)
       [_, id2] = Regex.run(~r/id="(psd-\d+)"/, html2)
       assert id1 != id2
+    end
+
+    test "raises when streaming without an explicit id" do
+      assert_raise ArgumentError, ~r/requires an explicit `id`/, fn ->
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "Hello",
+          streaming: true
+        })
+      end
+    end
+
+    test "keeps the id stable across streaming renders" do
+      html1 =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "Hello",
+          streaming: true,
+          id: "stable"
+        })
+
+      html2 =
+        render_component(&PhoenixStreamdown.markdown/1, %{
+          content: "Hello\n\nWorld",
+          streaming: true,
+          id: "stable"
+        })
+
+      assert html1 =~ ~s(id="stable")
+      assert html2 =~ ~s(id="stable")
+      assert html2 =~ ~s(id="stable-block-1")
     end
 
     test "accepts explicit id prefix" do
@@ -196,19 +228,6 @@ defmodule PhoenixStreamdownTest do
       refute block_0_div =~ ~s(phx-update="ignore"),
              "Block 0 just transitioned from last to not-last; " <>
                "it needs one final update before being frozen"
-    end
-
-    test "does not track generated ids in the process dictionary" do
-      before_keys = transition_tracking_keys()
-
-      for content <- ["Hello", "Hello extended\n\nSecond", "Hello extended\n\nSecond continued"] do
-        render_component(&PhoenixStreamdown.markdown/1, %{
-          content: content,
-          streaming: true
-        })
-      end
-
-      assert transition_tracking_keys() == before_keys
     end
 
     test "cleans up transition tracking when explicit-id stream finishes" do
